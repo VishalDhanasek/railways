@@ -25,6 +25,7 @@ import {
   type StockingFilterOptions,
 } from '@/services/stockingService';
 import { formatCurrency, formatDate } from '@/utils/format';
+import { delay } from '@/utils/delay';
 import { useToast } from '@/context/ToastContext';
 import type { NewStockingRecord, SortState, StockingAssetTag, StockingRecord, StockingSortKey, StockingQuery } from '@/types';
 
@@ -159,6 +160,10 @@ export default function StockingApplication() {
       await createStocking(data);
       showToast('Stocking entry added successfully.', 'success');
     }
+    // The backend persists to Vercel Blob, which can take a moment to
+    // reflect a write on a fresh read — give it a beat before refetching
+    // so the table doesn't appear to have "lost" what was just saved.
+    await delay(1200);
     setRefreshTick((t) => t + 1);
   };
 
@@ -169,6 +174,7 @@ export default function StockingApplication() {
       await deleteStocking(deletingRecord.id);
       showToast('Stocking entry deleted.', 'success');
       setDeletingRecord(null);
+      await delay(1200);
       setRefreshTick((t) => t + 1);
     } finally {
       setDeleting(false);

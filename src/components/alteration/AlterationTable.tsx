@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import AlterationForm from './AlterationForm';
 import { queryAlterations, createAlteration, updateAlteration, deleteAlteration } from '@/services/alterationService';
 import { formatDate } from '@/utils/format';
+import { delay } from '@/utils/delay';
 import { useToast } from '@/context/ToastContext';
 import type { AlterationRecord, AlterationSortKey, AlterationStatus, AssetKind, NewAlterationRecord, SortState } from '@/types';
 
@@ -119,6 +120,10 @@ export default function AlterationTable({ kind, title }: AlterationTableProps) {
       await createAlteration(kind, data);
       showToast(`${title} alteration added successfully.`, 'success');
     }
+    // The backend persists to Vercel Blob, which can take a moment to
+    // reflect a write on a fresh read — give it a beat before refetching
+    // so the table doesn't appear to have "lost" what was just saved.
+    await delay(1200);
     setRefreshTick((t) => t + 1);
   };
 
@@ -129,6 +134,7 @@ export default function AlterationTable({ kind, title }: AlterationTableProps) {
       await deleteAlteration(kind, deletingRecord.id);
       showToast(`${title} alteration deleted.`, 'success');
       setDeletingRecord(null);
+      await delay(1200);
       setRefreshTick((t) => t + 1);
     } finally {
       setDeleting(false);
@@ -236,7 +242,10 @@ export default function AlterationTable({ kind, title }: AlterationTableProps) {
         record={editingRecord}
         onClose={() => setFormOpen(false)}
         onSubmit={handleSubmit}
-        onAttachmentsChanged={() => setRefreshTick((t) => t + 1)}
+        onAttachmentsChanged={async () => {
+          await delay(1200);
+          setRefreshTick((t) => t + 1);
+        }}
       />
       <ConfirmDialog
         open={!!deletingRecord}
