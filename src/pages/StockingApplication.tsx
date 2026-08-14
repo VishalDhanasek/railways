@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, RotateCcw, Eye, Pencil, Trash2 } from 'lucide-react';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import PageHeader from '@/components/ui/PageHeader';
@@ -25,7 +25,6 @@ import {
   type StockingFilterOptions,
 } from '@/services/stockingService';
 import { formatCurrency, formatDate } from '@/utils/format';
-import { delay } from '@/utils/delay';
 import { useToast } from '@/context/ToastContext';
 import type { NewStockingRecord, SortState, StockingAssetTag, StockingRecord, StockingSortKey, StockingQuery } from '@/types';
 
@@ -50,6 +49,16 @@ export default function StockingApplication() {
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
   const [allCount, setAllCount] = useState(0);
+  // When true, the next fetch is a background reconciliation (after an
+  // optimistic local update already showed the change) — skip the loading
+  // skeleton so it doesn't flash over a table that's already correct.
+  const silentRef = useRef(false);
+  const scheduleReconcile = () => {
+    setTimeout(() => {
+      silentRef.current = true;
+      setRefreshTick((t) => t + 1);
+    }, 3000);
+  };
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<StockingRecord | null>(null);
@@ -104,17 +113,22 @@ export default function StockingApplication() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    const t = setTimeout(() => {
-      queryStocking({ ...currentQuery, page, pageSize }).then((res) => {
-        if (cancelled) return;
-        setRows(res.rows);
-        setTotal(res.total);
-        setFilteredTotalValue(res.filteredTotalValue);
-        setLoading(false);
-      });
-      getAllStocking().then((all) => !cancelled && setAllCount(all.length));
-    }, 200);
+    const isSilent = silentRef.current;
+    silentRef.current = false;
+    if (!isSilent) setLoading(true);
+    const t = setTimeout(
+      () => {
+        queryStocking({ ...currentQuery, page, pageSize }).then((res) => {
+          if (cancelled) return;
+          setRows(res.rows);
+          setTotal(res.total);
+          setFilteredTotalValue(res.filteredTotalValue);
+          setLoading(false);
+        });
+        getAllStocking().then((all) => !cancelled && setAllCount(all.length));
+      },
+      isSilent ? 0 : 200,
+    );
     return () => {
       cancelled = true;
       clearTimeout(t);
@@ -154,17 +168,27 @@ export default function StockingApplication() {
 
   const handleFormSubmit = async (data: NewStockingRecord) => {
     if (editingRecord) {
-      await updateStocking(editingRecord.id, data);
+      const updated = await updateStocking(editingRecord.id, data);
       showToast('Stocking entry updated successfully.', 'success');
+      // Optimistic: this record is already on screen — patch it in place
+      // rather than waiting on a fresh (possibly still-propagating) read.
+      setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setFilteredTotalValue((prev) => prev - editingRecord.totalValue + updated.totalValue);
     } else {
-      await createStocking(data);
+      const created = await createStocking(data);
       showToast('Stocking entry added successfully.', 'success');
+      // Optimistic: show it immediately on page 1 (where a new, newest-first
+      // entry belongs by default); other pages just get the reconciliation
+      // fetch below since we can't know where it'd sort into those.
+      if (page === 1) setRows((prev) => [created, ...prev].slice(0, pageSize));
+      setTotal((prev) => prev + 1);
+      setAllCount((prev) => prev + 1);
+      setFilteredTotalValue((prev) => prev + created.totalValue);
     }
     // The backend persists to Vercel Blob, which can take a moment to
-    // reflect a write on a fresh read — give it a beat before refetching
-    // so the table doesn't appear to have "lost" what was just saved.
-    await delay(1200);
-    setRefreshTick((t) => t + 1);
+    // reflect a write on a fresh read — reconcile quietly in the background
+    // (exact S.No./total/sort position) without blocking what's already shown.
+    scheduleReconcile();
   };
 
   const handleDelete = async () => {
@@ -173,9 +197,14 @@ export default function StockingApplication() {
     try {
       await deleteStocking(deletingRecord.id);
       showToast('Stocking entry deleted.', 'success');
+      // Optimistic: remove it right away — always correct, since we know
+      // exactly which visible row is gone.
+      setRows((prev) => prev.filter((r) => r.id !== deletingRecord.id));
+      setTotal((prev) => Math.max(0, prev - 1));
+      setAllCount((prev) => Math.max(0, prev - 1));
+      setFilteredTotalValue((prev) => prev - deletingRecord.totalValue);
       setDeletingRecord(null);
-      await delay(1200);
-      setRefreshTick((t) => t + 1);
+      scheduleReconcile();
     } finally {
       setDeleting(false);
     }
