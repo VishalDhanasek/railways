@@ -1,26 +1,30 @@
 import type {
   AlterationQuery,
   AlterationRecord,
-  Attachment,
   AttachmentFileType,
   AssetKind,
   NewAlterationRecord,
   PaginatedResult,
 } from '@/types';
-import { coachAlterations, wagonAlterations } from '@/data/alterationData';
-import { simulateDelay } from './network';
 import { recordActivity } from './activityLogService';
 
-// In-memory stores standing in for real database tables. Each function below
-// is async so a future implementation can swap the body for a fetch() call
-// against a real API without touching any calling component.
-const store: Record<AssetKind, AlterationRecord[]> = {
-  coach: [...coachAlterations],
-  wagon: [...wagonAlterations],
-};
+// ---------------------------------------------------------------------------
+// Talks to the Express + Excel backend in server/index.js — see that file
+// for the actual persistence (server/data/{coach,wagon}-alterations.xlsx).
+// Filtering/sorting/pagination stay client-side against the full list
+// returned by the API, same as when this was an in-memory mock.
+// ---------------------------------------------------------------------------
 
-function resequence(kind: AssetKind) {
-  store[kind] = store[kind].map((r, i) => ({ ...r, sNo: i + 1 }));
+async function parseOrThrow(res: Response) {
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  return res.status === 204 ? undefined : res.json();
+}
+
+function withKind(kind: AssetKind, row: Omit<AlterationRecord, 'kind'>): AlterationRecord {
+  return { ...row, kind };
 }
 
 function label(kind: AssetKind): 'Coach' | 'Wagon' {
@@ -28,11 +32,12 @@ function label(kind: AssetKind): 'Coach' | 'Wagon' {
 }
 
 export async function getAllAlterations(kind: AssetKind): Promise<AlterationRecord[]> {
-  return simulateDelay([...store[kind]]);
+  const rows = await parseOrThrow(await fetch(`/api/alterations/${kind}`));
+  return rows.map((r: Omit<AlterationRecord, 'kind'>) => withKind(kind, r));
 }
 
 export async function queryAlterations(kind: AssetKind, query: AlterationQuery): Promise<PaginatedResult<AlterationRecord>> {
-  let rows = [...store[kind]];
+  let rows = await getAllAlterations(kind);
 
   if (query.search) {
     const term = query.search.trim().toLowerCase();
@@ -59,32 +64,36 @@ export async function queryAlterations(kind: AssetKind, query: AlterationQuery):
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? 10;
   const start = (page - 1) * pageSize;
-  return simulateDelay({ rows: rows.slice(start, start + pageSize), total, page, pageSize });
+  return { rows: rows.slice(start, start + pageSize), total, page, pageSize };
 }
 
 export async function createAlteration(kind: AssetKind, data: NewAlterationRecord): Promise<AlterationRecord> {
-  const record: AlterationRecord = { ...data, id: `${kind}-${crypto.randomUUID()}`, sNo: store[kind].length + 1, kind, attachments: [] };
-  store[kind] = [record, ...store[kind]];
-  resequence(kind);
-  recordActivity(`${label(kind)} alteration ${record.tlNo} added`, label(kind));
-  return simulateDelay(record);
+  const row = await parseOrThrow(
+    await fetch(`/api/alterations/${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+  );
+  recordActivity(`${label(kind)} alteration ${row.tlNo} added`, label(kind));
+  return withKind(kind, row);
 }
 
 export async function updateAlteration(kind: AssetKind, id: string, data: NewAlterationRecord): Promise<AlterationRecord> {
-  const idx = store[kind].findIndex((r) => r.id === id);
-  if (idx === -1) throw new Error('Record not found');
-  const updated: AlterationRecord = { ...store[kind][idx], ...data };
-  store[kind][idx] = updated;
-  recordActivity(`${label(kind)} alteration ${updated.tlNo} updated`, label(kind));
-  return simulateDelay(updated);
+  const row = await parseOrThrow(
+    await fetch(`/api/alterations/${kind}/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+  );
+  recordActivity(`${label(kind)} alteration ${row.tlNo} updated`, label(kind));
+  return withKind(kind, row);
 }
 
 export async function deleteAlteration(kind: AssetKind, id: string): Promise<void> {
-  const record = store[kind].find((r) => r.id === id);
-  store[kind] = store[kind].filter((r) => r.id !== id);
-  resequence(kind);
-  if (record) recordActivity(`${label(kind)} alteration ${record.tlNo} deleted`, label(kind));
-  return simulateDelay(undefined, 250);
+  await parseOrThrow(await fetch(`/api/alterations/${kind}/${id}`, { method: 'DELETE' }));
+  recordActivity(`${label(kind)} alteration deleted`, label(kind));
 }
 
 const EXTENSION_TYPE_MAP: Record<string, AttachmentFileType> = {
@@ -100,35 +109,21 @@ const EXTENSION_TYPE_MAP: Record<string, AttachmentFileType> = {
   webp: 'image',
 };
 
+/** Client-side pre-check only — the server validates again on upload. */
 export function detectAttachmentType(filename: string): AttachmentFileType | null {
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
   return EXTENSION_TYPE_MAP[ext] ?? null;
 }
 
 export async function addAttachment(kind: AssetKind, id: string, file: File): Promise<AlterationRecord> {
-  const idx = store[kind].findIndex((r) => r.id === id);
-  if (idx === -1) throw new Error('Record not found');
-  const type = detectAttachmentType(file.name);
-  if (!type) throw new Error('Unsupported file format');
-
-  const attachment: Attachment = {
-    id: `att-${crypto.randomUUID()}`,
-    name: file.name,
-    type,
-    size: file.size,
-    url: URL.createObjectURL(file),
-    uploadedAt: new Date().toISOString(),
-  };
-  const updated: AlterationRecord = { ...store[kind][idx], attachments: [...store[kind][idx].attachments, attachment] };
-  store[kind][idx] = updated;
-  recordActivity(`Supporting document "${file.name}" uploaded for ${label(kind).toLowerCase()} alteration ${updated.tlNo}`, label(kind));
-  return simulateDelay(updated, 300);
+  const formData = new FormData();
+  formData.append('file', file);
+  const row = await parseOrThrow(await fetch(`/api/alterations/${kind}/${id}/attachments`, { method: 'POST', body: formData }));
+  recordActivity(`Supporting document "${file.name}" uploaded for ${label(kind).toLowerCase()} alteration ${row.tlNo}`, label(kind));
+  return withKind(kind, row);
 }
 
 export async function removeAttachment(kind: AssetKind, id: string, attachmentId: string): Promise<AlterationRecord> {
-  const idx = store[kind].findIndex((r) => r.id === id);
-  if (idx === -1) throw new Error('Record not found');
-  const updated: AlterationRecord = { ...store[kind][idx], attachments: store[kind][idx].attachments.filter((a) => a.id !== attachmentId) };
-  store[kind][idx] = updated;
-  return simulateDelay(updated, 200);
+  const row = await parseOrThrow(await fetch(`/api/alterations/${kind}/${id}/attachments/${attachmentId}`, { method: 'DELETE' }));
+  return withKind(kind, row);
 }

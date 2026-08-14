@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.vercel
+
+# Business data now lives in Vercel Blob storage (see server/lib/excelStore.js),
+# not on local disk — nothing to gitignore here anymore.
 
 # Editor directories and files
 .vscode/*

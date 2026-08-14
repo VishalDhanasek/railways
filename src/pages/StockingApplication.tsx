@@ -21,11 +21,8 @@ import {
   createStocking,
   updateStocking,
   deleteStocking,
-  getDistinctYears,
-  getDistinctCw,
-  getDistinctQForms,
-  getDistinctYw,
-  getDistinctPendingWith,
+  getStockingFilterOptions,
+  type StockingFilterOptions,
 } from '@/services/stockingService';
 import { formatCurrency, formatDate } from '@/utils/format';
 import { useToast } from '@/context/ToastContext';
@@ -59,15 +56,30 @@ export default function StockingApplication() {
   const [deletingRecord, setDeletingRecord] = useState<StockingRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const [filterOptionsRaw, setFilterOptionsRaw] = useState<StockingFilterOptions>({
+    years: [],
+    cws: [],
+    qForms: [],
+    yws: [],
+    pendingWiths: [],
+  });
+  useEffect(() => {
+    let cancelled = false;
+    getStockingFilterOptions().then((opts) => !cancelled && setFilterOptionsRaw(opts));
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshTick]);
+
   const filterOptions = useMemo(
     () => ({
-      years: ['All', ...getDistinctYears().map(String)],
-      cws: ['All', ...getDistinctCw()],
-      qForms: ['All', ...getDistinctQForms()],
-      yws: ['All', ...getDistinctYw()],
-      pendingWiths: ['All', ...getDistinctPendingWith()],
+      years: ['All', ...filterOptionsRaw.years.map(String)],
+      cws: ['All', ...filterOptionsRaw.cws],
+      qForms: ['All', ...filterOptionsRaw.qForms],
+      yws: ['All', ...filterOptionsRaw.yws],
+      pendingWiths: ['All', ...filterOptionsRaw.pendingWiths],
     }),
-    [refreshTick],
+    [filterOptionsRaw],
   );
 
   const currentQuery: StockingQuery = useMemo(

@@ -1,28 +1,31 @@
 import type { NewStockingRecord, StockingPageResult, StockingQuery, StockingRecord } from '@/types';
-import { stockingRecords } from '@/data/stockingData';
-import { simulateDelay } from './network';
 import { recordActivity } from './activityLogService';
 
-let store: StockingRecord[] = [...stockingRecords];
+// ---------------------------------------------------------------------------
+// Talks to the Express + Excel backend in server/index.js — see that file
+// for the actual persistence (server/data/stocking.xlsx). Filtering/sorting/
+// pagination stay client-side against the full list returned by the API,
+// same as when this was an in-memory mock.
+// ---------------------------------------------------------------------------
 
-function resequence() {
-  store = store.map((r, i) => ({ ...r, sNo: i + 1 }));
-}
-
-function withTotal(data: NewStockingRecord): number {
-  return Math.round(data.unit * data.costPerItem * 100) / 100;
+async function parseOrThrow(res: Response) {
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  return res.status === 204 ? undefined : res.json();
 }
 
 export async function getAllStocking(): Promise<StockingRecord[]> {
-  return simulateDelay([...store]);
+  return parseOrThrow(await fetch('/api/stocking'));
 }
 
-function filterAndSort(query: StockingQuery): StockingRecord[] {
-  let rows = [...store];
+function filterAndSort(rows: StockingRecord[], query: StockingQuery): StockingRecord[] {
+  let result = [...rows];
 
   if (query.search) {
     const term = query.search.trim().toLowerCase();
-    rows = rows.filter(
+    result = result.filter(
       (r) =>
         r.itemDescription.toLowerCase().includes(term) ||
         r.plNo.toLowerCase().includes(term) ||
@@ -33,31 +36,31 @@ function filterAndSort(query: StockingQuery): StockingRecord[] {
   }
 
   if (query.year && query.year !== 'All') {
-    rows = rows.filter((r) => r.year === query.year);
+    result = result.filter((r) => r.year === query.year);
   }
   if (query.cw && query.cw !== 'All') {
-    rows = rows.filter((r) => r.cw === query.cw);
+    result = result.filter((r) => r.cw === query.cw);
   }
   if (query.qForm && query.qForm !== 'All') {
-    rows = rows.filter((r) => r.qForm === query.qForm);
+    result = result.filter((r) => r.qForm === query.qForm);
   }
   if (query.yw && query.yw !== 'All') {
-    rows = rows.filter((r) => r.yw === query.yw);
+    result = result.filter((r) => r.yw === query.yw);
   }
   if (query.pendingWith && query.pendingWith !== 'All') {
-    rows = rows.filter((r) => r.pendingWith === query.pendingWith);
+    result = result.filter((r) => r.pendingWith === query.pendingWith);
   }
   if (query.dateFrom) {
-    rows = rows.filter((r) => r.dateReceived >= query.dateFrom!);
+    result = result.filter((r) => r.dateReceived >= query.dateFrom!);
   }
   if (query.dateTo) {
-    rows = rows.filter((r) => r.dateReceived <= query.dateTo!);
+    result = result.filter((r) => r.dateReceived <= query.dateTo!);
   }
 
   if (query.sort) {
     const { key, direction } = query.sort;
     const dir = direction === 'asc' ? 1 : -1;
-    rows.sort((a, b) => {
+    result.sort((a, b) => {
       const av = a[key];
       const bv = b[key];
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
@@ -65,11 +68,12 @@ function filterAndSort(query: StockingQuery): StockingRecord[] {
     });
   }
 
-  return rows;
+  return result;
 }
 
 export async function queryStocking(query: StockingQuery): Promise<StockingPageResult> {
-  const rows = filterAndSort(query);
+  const all = await getAllStocking();
+  const rows = filterAndSort(all, query);
 
   // Total value of the *filtered* result set — used for the footer summary.
   const filteredTotalValue = rows.reduce((sum, r) => sum + r.totalValue, 0);
@@ -80,62 +84,60 @@ export async function queryStocking(query: StockingQuery): Promise<StockingPageR
   const start = (page - 1) * pageSize;
   const pageRows = rows.slice(start, start + pageSize);
 
-  return simulateDelay({ rows: pageRows, total, page, pageSize, filteredTotalValue });
+  return { rows: pageRows, total, page, pageSize, filteredTotalValue };
 }
 
 /** All records matching the current filters, ignoring pagination — used for "Export Filtered". */
 export async function getFilteredStocking(query: StockingQuery): Promise<StockingRecord[]> {
-  return simulateDelay(filterAndSort(query), 150);
+  return filterAndSort(await getAllStocking(), query);
 }
 
 export async function createStocking(data: NewStockingRecord): Promise<StockingRecord> {
-  const record: StockingRecord = {
-    ...data,
-    id: `stk-${crypto.randomUUID()}`,
-    sNo: store.length + 1,
-    totalValue: withTotal(data),
-  };
-  store = [record, ...store];
-  resequence();
+  const record = await parseOrThrow(
+    await fetch('/api/stocking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+  );
   recordActivity(`New stocking entry added for "${record.itemDescription}"`, 'Stocking');
-  return simulateDelay(record);
+  return record;
 }
 
 export async function updateStocking(id: string, data: NewStockingRecord): Promise<StockingRecord> {
-  const idx = store.findIndex((r) => r.id === id);
-  if (idx === -1) throw new Error('Record not found');
-  const updated: StockingRecord = {
-    ...store[idx],
-    ...data,
-    totalValue: withTotal(data),
-  };
-  store[idx] = updated;
-  recordActivity(`Stocking entry "${updated.itemDescription}" updated`, 'Stocking');
-  return simulateDelay(updated);
+  const record = await parseOrThrow(
+    await fetch(`/api/stocking/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+  );
+  recordActivity(`Stocking entry "${record.itemDescription}" updated`, 'Stocking');
+  return record;
 }
 
 export async function deleteStocking(id: string): Promise<void> {
-  const record = store.find((r) => r.id === id);
-  store = store.filter((r) => r.id !== id);
-  resequence();
-  if (record) {
-    recordActivity(`Stocking entry "${record.itemDescription}" deleted`, 'Stocking');
-  }
-  return simulateDelay(undefined, 250);
+  await parseOrThrow(await fetch(`/api/stocking/${id}`, { method: 'DELETE' }));
+  recordActivity('Stocking entry deleted', 'Stocking');
 }
 
-export function getDistinctYears(): number[] {
-  return Array.from(new Set(store.map((r) => r.year))).sort((a, b) => b - a);
+export interface StockingFilterOptions {
+  years: number[];
+  cws: string[];
+  qForms: string[];
+  yws: string[];
+  pendingWiths: string[];
 }
-export function getDistinctCw() {
-  return Array.from(new Set(store.map((r) => r.cw))).sort();
-}
-export function getDistinctQForms(): string[] {
-  return Array.from(new Set(store.map((r) => r.qForm))).sort();
-}
-export function getDistinctYw(): string[] {
-  return Array.from(new Set(store.map((r) => r.yw))).sort();
-}
-export function getDistinctPendingWith(): string[] {
-  return Array.from(new Set(store.map((r) => r.pendingWith))).sort();
+
+/** One fetch, all the distinct dropdown option sets — used to populate the filter bar. */
+export async function getStockingFilterOptions(): Promise<StockingFilterOptions> {
+  const rows = await getAllStocking();
+  const distinct = <T,>(values: T[]) => Array.from(new Set(values));
+  return {
+    years: distinct(rows.map((r) => r.year)).sort((a, b) => b - a),
+    cws: distinct(rows.map((r) => r.cw)).sort(),
+    qForms: distinct(rows.map((r) => r.qForm)).sort(),
+    yws: distinct(rows.map((r) => r.yw)).sort(),
+    pendingWiths: distinct(rows.map((r) => r.pendingWith)).sort(),
+  };
 }
