@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { put, head, BlobNotFoundError } from '@vercel/blob';
+import { put, get } from '@vercel/blob';
 
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -13,6 +13,13 @@ const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreads
  * writing and parsed back out after reading — Excel cells only hold
  * primitives.
  *
+ * Reads use `get(..., { useCache: false })` rather than a plain URL fetch —
+ * Vercel's CDN can take up to ~60s to propagate a blob overwrite, so a
+ * cached read right after a write can serve stale content otherwise (this
+ * bit us: create → immediate refetch → old data). `useCache: false` always
+ * hits the origin, trading a bit of latency for a guaranteed-fresh read,
+ * which matters far more than raw speed for a low-traffic internal tool.
+ *
  * Concurrency note: each request is a separate, isolated function
  * invocation, so there's no in-process lock possible (unlike a
  * long-running server). Two writes that race can clobber one another —
@@ -21,17 +28,10 @@ const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreads
  */
 export function createExcelStore(pathname, columns) {
   async function readAll() {
-    let url;
-    try {
-      const info = await head(pathname);
-      url = info.url;
-    } catch (err) {
-      if (err instanceof BlobNotFoundError) return []; // table is genuinely empty
-      throw err; // misconfiguration (bad/missing token, etc.) — don't hide it as "no data"
-    }
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) return [];
-    const buffer = await res.arrayBuffer();
+    const result = await get(pathname, { access: 'public', useCache: false });
+    if (!result || !result.stream) return []; // table doesn't exist yet — empty
+
+    const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer);
     const sheet = workbook.worksheets[0];
