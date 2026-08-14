@@ -69,8 +69,13 @@ function resequence(rows) {
 // ---------------------------------------------------------------------------
 
 const app = express();
+app.disable('etag'); // this is a live data API, not static assets — never let a GET short-circuit to 304
 app.use(cors());
 app.use(express.json());
+app.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
