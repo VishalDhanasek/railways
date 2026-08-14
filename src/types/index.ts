@@ -6,6 +6,25 @@
 
 export type AlterationStatus = 'Pending' | 'In Progress' | 'Completed' | 'On Hold';
 
+/**
+ * A row from the credentials workbook (public/credentials.xlsx). This file
+ * is fetched and parsed client-side — see the security note in
+ * src/services/authService.ts before using this in a real deployment.
+ */
+export interface UserCredential {
+  username: string;
+  password: string;
+  name: string;
+  role: string;
+}
+
+/** The authenticated user's public profile — never carries the password. */
+export interface AuthUser {
+  username: string;
+  name: string;
+  role: string;
+}
+
 /** Supported supporting-document formats for Nomenclature Alteration remarks. */
 export type AttachmentFileType = 'pdf' | 'excel' | 'word' | 'image';
 

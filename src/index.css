@@ -3,16 +3,24 @@
 @theme {
   --font-sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
 
-  --color-brand-50: #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-200: #bfdbfe;
-  --color-brand-300: #93c5fd;
-  --color-brand-400: #60a5fa;
-  --color-brand-500: #3b82f6;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
-  --color-brand-800: #1e3a8a;
-  --color-brand-900: #172554;
+  /* Railway navy — inspired by railway signage & uniform blues. */
+  --color-brand-50: #eef4fa;
+  --color-brand-100: #d7e5f3;
+  --color-brand-200: #afc9e6;
+  --color-brand-300: #7ea8d4;
+  --color-brand-400: #4a80ba;
+  --color-brand-500: #2b619e;
+  --color-brand-600: #1c4d84;
+  --color-brand-700: #163d69;
+  --color-brand-800: #122f53;
+  --color-brand-900: #0d2540;
+  --color-brand-950: #081729;
+
+  /* Signal amber — used sparingly for caution/attention accents. */
+  --color-signal-50: #fff8e8;
+  --color-signal-400: #f5a623;
+  --color-signal-500: #e6920a;
+  --color-signal-600: #c97b05;
 }
 
 :root {
@@ -78,4 +86,61 @@ table {
 }
 .animate-slide-in-right {
   animation: slide-in-right 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/*
+ * Rail track motif — two parallel rails with sleeper ties, built entirely
+ * from CSS gradients (no image assets). Used as a thin decorative divider
+ * in a few key spots to keep the app feeling railway-specific without
+ * cluttering the data screens.
+ *   .rail-track          — dark rails/ties, for use on light backgrounds
+ *   .rail-track-invert    — light rails/ties, for use on dark backgrounds
+ */
+.rail-track,
+.rail-track-invert {
+  height: 7px;
+  background-repeat: no-repeat, no-repeat, repeat-x;
+  background-position: top, bottom, center;
+  background-size: 100% 2px, 100% 2px, 100% 3px;
+}
+.rail-track {
+  background-image:
+    linear-gradient(#94a3b8, #94a3b8),
+    linear-gradient(#94a3b8, #94a3b8),
+    repeating-linear-gradient(90deg, #cbd5e1 0 3px, transparent 3px 13px);
+}
+.rail-track-invert {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.3)),
+    linear-gradient(rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.3)),
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.18) 0 3px, transparent 3px 13px);
+}
+
+/* Train-on-track loader — see components/ui/RailwayLoader.tsx */
+@keyframes train-travel {
+  0% { left: -15%; }
+  100% { left: 115%; }
+}
+.animate-train-travel {
+  animation: train-travel 1.7s linear infinite;
+}
+.animate-train-travel-lg {
+  animation: train-travel 1.9s linear infinite;
+}
+
+/* Slow "Ken Burns" zoom for carousel photos — see components/login/PhotoCarousel.tsx */
+@keyframes ken-burns {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.09); }
+}
+.animate-ken-burns {
+  animation: ken-burns 7s ease-out forwards;
+}
+
+@keyframes smoke-puff {
+  0% { transform: translate(0, 0) scale(0.5); opacity: 0.5; }
+  100% { transform: translate(-18px, -26px) scale(1.4); opacity: 0; }
+}
+.animate-smoke-puff {
+  animation: smoke-puff 1.4s ease-out infinite;
 }
